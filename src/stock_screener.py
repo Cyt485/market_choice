@@ -24,7 +24,7 @@ class StockScreener:
         # 清理 code 中的换行符
         df['代码'] = df['代码'].astype(str).str.strip()
 
-        # 数值转换
+        # 数值转换（fillna 防止 NaN 导致过滤失败）
         df['market_cap'] = pd.to_numeric(df['market_cap'], errors='coerce').fillna(0)
         df['pe_ttm'] = pd.to_numeric(df['pe_ttm'], errors='coerce').fillna(-1)
         df['turnover'] = pd.to_numeric(df['turnover'], errors='coerce').fillna(0)
