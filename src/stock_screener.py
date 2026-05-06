@@ -21,37 +21,33 @@ class StockScreener:
 
         print(f"  获取到 {len(df)} 只 A 股原始数据")
 
-        # 数值转换（fillna 防止 NaN 导致过滤失败）
+        # 清理 code 中的换行符
+        df['代码'] = df['代码'].astype(str).str.strip()
+
+        # 数值转换
         df['market_cap'] = pd.to_numeric(df['market_cap'], errors='coerce').fillna(0)
         df['pe_ttm'] = pd.to_numeric(df['pe_ttm'], errors='coerce').fillna(-1)
         df['turnover'] = pd.to_numeric(df['turnover'], errors='coerce').fillna(0)
         df['volume_ratio'] = pd.to_numeric(df['volume_ratio'], errors='coerce').fillna(1.0)
 
-        # 调试输出
         print(f"  [调试] 市值范围: {df['market_cap'].min()/1e8:.2f}亿 ~ {df['market_cap'].max()/1e8:.2f}亿")
         print(f"  [调试] PE范围: {df['pe_ttm'].min():.2f} ~ {df['pe_ttm'].max():.2f}")
         print(f"  [调试] 换手范围: {df['turnover'].min():.2f}% ~ {df['turnover'].max():.2f}%")
-        print(f"  [调试] 量比范围: {df['volume_ratio'].min():.2f} ~ {df['volume_ratio'].max():.2f}")
 
         initial = len(df)
 
-        # 1. 市值过滤（>=20亿），市值为0的跳过此条件（靠评分处理）
+        # 市值过滤：>=20亿，或市值为0（无数据时靠评分处理）
         mask_cap = (df['market_cap'] >= self.config.MIN_MARKET_CAP_A) | (df['market_cap'] == 0)
         df = df[mask_cap]
 
-        # 2. PE过滤：允许 -1（无数据），允许 0-50，排除 >50 和 <0（除-1外）
+        # PE过滤：允许 -1（无数据），允许 0-50
         mask_pe = (df['pe_ttm'] == -1) | ((df['pe_ttm'] > 0) & (df['pe_ttm'] <= self.config.MAX_PE_TTM))
         df = df[mask_pe]
 
-        # 3. 热度过滤
+        # 热度过滤
         df = df[df['turnover'] <= self.config.MAX_TURNOVER_RATIO]
 
-        # 4. 量比过滤
-        df = df[df['volume_ratio'] <= self.config.MAX_VOLUME_RATIO]
-
         print(f"  过滤后: {initial} -> {len(df)} 只")
-        if len(df) == 0:
-            print("  ⚠️ A股过滤后为空，请检查上述调试数据")
         return df
 
     def screen_hk_shares(self) -> pd.DataFrame:
@@ -63,6 +59,9 @@ class StockScreener:
 
         print(f"  获取到 {len(df)} 只港股原始数据")
 
+        # 清理 code
+        df['code'] = df['code'].astype(str).str.strip()
+
         df['market_cap'] = pd.to_numeric(df['market_cap'], errors='coerce').fillna(0)
         df['pe_ttm'] = pd.to_numeric(df['pe_ttm'], errors='coerce').fillna(-1)
         df['turnover'] = pd.to_numeric(df['turnover'], errors='coerce').fillna(0)
@@ -73,7 +72,6 @@ class StockScreener:
 
         initial = len(df)
 
-        # 市值过滤（>=10亿港币），市值为0的跳过
         mask_cap = (df['market_cap'] >= self.config.MIN_MARKET_CAP_HK) | (df['market_cap'] == 0)
         df = df[mask_cap]
 
@@ -83,8 +81,6 @@ class StockScreener:
         df = df[df['turnover'] <= self.config.MAX_TURNOVER_RATIO]
 
         print(f"  港股过滤后: {initial} -> {len(df)} 只")
-        if len(df) == 0:
-            print("  ⚠️ 港股过滤后为空")
         return df
 
     def enrich_financials(self, df: pd.DataFrame, market: str = 'a') -> pd.DataFrame:
@@ -108,7 +104,6 @@ class StockScreener:
 
                 score = self._calculate_score(fin, cf, row)
 
-                # 只排除极端差的情况（综合评分<25）
                 if score < 25:
                     continue
 
@@ -135,9 +130,6 @@ class StockScreener:
 
             except Exception as e:
                 continue
-
-            if len(results) % 50 == 0 and len(results) > 0:
-                print(f"    已处理 {len(results)} 只合格股票...")
 
         result_df = pd.DataFrame(results)
         print(f"  财务获取成功: {success_count}, 失败: {fail_count}")

@@ -125,25 +125,30 @@ class DataFetcher:
                         continue
                     try:
                         prefix, data = line.split('="', 1)
-                        code = prefix.replace('v_sh', '').replace('v_sz', '')
+                        code = prefix.replace('v_sh', '').replace('v_sz', '').strip()
                         parts = data.split('~')
                         if len(parts) < 46:
                             continue
                         
-                        # 腾讯字段索引（经核实）：
-                        # 0=市场 1=名称 2=代码 3=现价 4=昨收 5=今开 ... 
-                        # 28=换手率 29=市盈率(TTM) 33=振幅 35=总市值 39=量比
+                        # 腾讯字段索引（经日志验证）：
+                        # 0=市场 1=名称 2=代码 3=现价 4=昨收 5=今开 6=成交量(手) 7=外盘 8=内盘
+                        # 9-18=买卖五档 19=最近成交 20=时间 21=涨跌 22=涨跌幅% 23=最高 24=最低
+                        # 25=价格/成交量(笔) 26=成交量(手) 27=成交额(万) 28=换手率% 29=市盈率(TTM)
+                        # 30=未知 31=最高 32=最低 33=振幅 34=流通市值 35=总市值 36=市净率
+                        # 37=涨停价 38=跌停价 39=量比 40=委差 41=均价 42=市盈(动) 43=市盈(静)
+                        # 44=市销率 45=市现率
+                        
                         price = safe_float(parts[3])
-                        change_pct = safe_float(parts[32])
+                        change_pct = safe_float(parts[22])
                         turnover = safe_float(parts[28])
                         pe = safe_float(parts[29], -1)
                         market_cap = safe_float(parts[35])
                         volume_ratio = safe_float(parts[39], 1.0)
                         amplitude = safe_float(parts[33])
                         
-                        # 调试：打印第一只股票的原始数据
+                        # 只打印一次调试
                         if len(results) == 0:
-                            print(f"    [调试] {code} {parts[1]}: 价{price} PE{pe} 市值{market_cap/1e8:.1f}亿 换手{turnover}")
+                            print(f"    [调试] {code} {parts[1]}: 价{price} PE{pe} 市值{market_cap/1e8:.1f}亿 换手{turnover}% 量比{volume_ratio}")
                         
                         results.append({
                             '代码': code,
@@ -171,7 +176,7 @@ class DataFetcher:
 
     def get_hk_share_list(self) -> pd.DataFrame:
         """获取港股列表"""
-        # 主方案：akshare 新浪港股（GitHub Actions 环境下反而更稳定）
+        # 主方案：akshare 新浪港股
         try:
             print("  🔄 尝试新浪港股接口...")
             df = ak.stock_hk_spot()
@@ -186,15 +191,19 @@ class DataFetcher:
         return self._get_hk_from_tencent()
 
     def _clean_hk_sina_df(self, df: pd.DataFrame) -> pd.DataFrame:
-        """清洗新浪港股数据（正确解析市值和PE）"""
-        # akshare stock_hk_spot 返回列：代码,名称,最新价,涨跌额,涨跌幅,买入,卖出,昨收,今开,
-        # 最高,最低,成交量/万,成交额/万,市盈率,未知,未知,市值,未知...
+        """清洗新浪港股数据"""
+        # 打印原始列名用于调试
+        print(f"    [调试] 新浪港股原始列: {list(df.columns)}")
+        
+        # 新浪港股列名可能为：代码,名称,最新价,涨跌额,涨跌幅,买入,卖出,昨收,今开,
+        # 最高,最低,成交量/万,成交额/万,市盈率,振幅,量比,市值,...
         col_map = {
             '代码': 'code', '名称': 'name', '最新价': 'price', '涨跌幅': 'change_pct',
             '成交量': 'volume', '成交额': 'amount', '市盈率': 'pe_ttm', '市值': 'market_cap',
-            '换手率': 'turnover'
+            '换手率': 'turnover', '量比': 'volume_ratio', '振幅': 'amplitude'
         }
-        # 重命名存在的列
+        
+        # 只重命名存在的列
         for old, new in col_map.items():
             if old in df.columns:
                 df = df.rename(columns={old: new})
@@ -204,20 +213,22 @@ class DataFetcher:
             if col not in df.columns:
                 df[col] = 0
         
-        # 数值转换（新浪接口市值单位可能是"亿"，需要转元）
+        # 数值转换
         df['market_cap'] = pd.to_numeric(df['market_cap'], errors='coerce').fillna(0)
-        # 如果市值小于1e10（100亿），假设单位是"亿"（即需要乘1e8）
-        # 如果市值已经很大（>1e10），说明单位已经是"元"
-        # 简单处理：如果市值 < 1e8, 乘 1e8
-        df.loc[df['market_cap'] < 1e8, 'market_cap'] = df.loc[df['market_cap'] < 1e8, 'market_cap'] * 1e8
-        
         df['pe_ttm'] = pd.to_numeric(df['pe_ttm'], errors='coerce').fillna(-1)
         df['turnover'] = pd.to_numeric(df['turnover'], errors='coerce').fillna(0)
         df['price'] = pd.to_numeric(df['price'], errors='coerce').fillna(0)
         df['change_pct'] = pd.to_numeric(df['change_pct'], errors='coerce').fillna(0)
+        df['volume_ratio'] = pd.to_numeric(df['volume_ratio'], errors='coerce').fillna(1.0)
+        df['amplitude'] = pd.to_numeric(df['amplitude'], errors='coerce').fillna(0)
         
-        df['volume_ratio'] = 1.0
-        df['amplitude'] = 0
+        # 新浪市值单位可能是"亿"，需要判断
+        # 如果最大值小于1e8，说明单位是"亿"，需要乘1e8
+        max_cap = df['market_cap'].max()
+        if max_cap > 0 and max_cap < 1e8:
+            df['market_cap'] = df['market_cap'] * 1e8
+            print(f"    [调试] 港股市值单位转换为元，示例: {df['market_cap'].iloc[0]/1e8:.1f}亿")
+        
         df['industry'] = '港股通'
         df['market'] = 'hk'
         
@@ -280,13 +291,14 @@ class DataFetcher:
                         continue
                     try:
                         prefix, data = line.split('="', 1)
-                        code = prefix.replace('v_hk', '')
+                        code = prefix.replace('v_hk', '').strip()
                         parts = data.split('~')
                         if len(parts) < 46:
                             continue
 
+                        # 港股腾讯字段与A股一致
                         price = safe_float(parts[3])
-                        change_pct = safe_float(parts[32])
+                        change_pct = safe_float(parts[22])
                         turnover = safe_float(parts[28])
                         pe = safe_float(parts[29], -1)
                         market_cap = safe_float(parts[35])
@@ -327,7 +339,9 @@ class DataFetcher:
 
         result = {}
         if market == 'a':
-            result = self._get_a_financial_from_baostock(code)
+            # Baostock 需要 sh.600000 格式
+            baostock_code = f"sh.{code}" if code.startswith('6') else f"sz.{code}"
+            result = self._get_a_financial_from_baostock(baostock_code)
             if not result:
                 result = self._get_a_financial_from_eastmoney(code)
 
@@ -336,6 +350,7 @@ class DataFetcher:
         return result
 
     def _get_a_financial_from_baostock(self, code: str) -> Dict:
+        """Baostock 获取 A 股财务（code格式: sh.600000）"""
         try:
             import baostock as bs
             lg = bs.login()
@@ -433,7 +448,8 @@ class DataFetcher:
 
         result = {}
         if market == 'a':
-            result = self._get_a_cf_from_baostock(code)
+            baostock_code = f"sh.{code}" if code.startswith('6') else f"sz.{code}"
+            result = self._get_a_cf_from_baostock(baostock_code)
             if not result:
                 result = self._get_a_cf_from_eastmoney(code)
 
