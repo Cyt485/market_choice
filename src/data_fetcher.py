@@ -127,28 +127,27 @@ class DataFetcher:
                         prefix, data = line.split('="', 1)
                         code = prefix.replace('v_sh', '').replace('v_sz', '').strip()
                         parts = data.split('~')
-                        if len(parts) < 46:
+                        if len(parts) < 50:
                             continue
                         
-                        # 腾讯字段索引（经核实）：
-                        # 0=市场 1=名称 2=代码 3=现价 4=昨收 5=今开 6=成交量(手) 7=外盘 8=内盘
-                        # 9-18=买卖五档 19=最近成交 20=时间 21=涨跌 22=涨跌% 23=最高 24=最低
-                        # 25=价格/成交量(手)/成交额 26=成交量(手) 27=成交额(万) 
-                        # 28=换手率% 29=市盈率 30=空 31=最高 32=最低 33=振幅 34=流通市值
-                        # 35=总市值 36=市净率 37=涨停价 38=跌停价 39=量比 40=委差 41=均价
-                        # 42=市盈(动) 43=市盈(静) 44=市销率 45=市现率
-                        
-                        # 注意：不同来源的字段索引有差异，根据实际返回验证：
-                        # 实测：parts[38]=换手率, parts[39]=市盈率, parts[43]=振幅, 
-                        #       parts[44]=流通市值, parts[45]=总市值, parts[39]=量比
+                        # 腾讯字段索引（经日志验证）：
+                        # 0=市场 1=名称 2=代码 3=现价 4=昨收 5=今开 ...
+                        # 28=换手率% 29=市盈率(TTM) 32=涨跌幅% 33=振幅
+                        # 44=流通市值(亿) 45=总市值(亿) 49=量比
                         
                         price = safe_float(parts[3])
                         change_pct = safe_float(parts[32])
-                        turnover = safe_float(parts[38])
-                        pe = safe_float(parts[39], -1)
-                        market_cap = safe_float(parts[45])  # 总市值（元）
-                        volume_ratio = safe_float(parts[39], 1.0)  # 量比
-                        amplitude = safe_float(parts[43])
+                        turnover = safe_float(parts[28])
+                        pe = safe_float(parts[29], -1)
+                        
+                        # 市值：优先总市值(parts[45])，为空则用流通市值(parts[44])，单位亿→元
+                        market_cap_total = safe_float(parts[45])   # 总市值（亿）
+                        market_cap_circ = safe_float(parts[44])    # 流通市值（亿）
+                        market_cap = market_cap_total if market_cap_total > 0 else market_cap_circ
+                        market_cap = market_cap * 1e8            # 亿 → 元
+                        
+                        volume_ratio = safe_float(parts[49], 1.0)  # 量比
+                        amplitude = safe_float(parts[33])
                         
                         # 只打印一次调试
                         if len(results) == 0:
@@ -180,24 +179,20 @@ class DataFetcher:
 
     def get_hk_share_list(self) -> pd.DataFrame:
         """获取港股列表"""
-        # 主方案：akshare 新浪港股（只有基本行情，无市值PE）
         try:
             print("  🔄 尝试新浪港股接口...")
             df = ak.stock_hk_spot()
             if not df.empty and len(df) > 100:
                 print(f"    新浪港股获取到 {len(df)} 只（无市值PE数据）")
-                # 新浪港股只有基本行情，需要另外补充市值PE
                 return self._get_hk_with_tencent_supplement(df)
         except Exception as e:
             print(f"  ⚠️ 新浪港股接口失败: {str(e)[:60]}")
 
-        # 兜底：纯腾讯港股
         print("  🔄 使用腾讯财经港股接口...")
         return self._get_hk_from_tencent()
 
     def _get_hk_with_tencent_supplement(self, df: pd.DataFrame) -> pd.DataFrame:
         """新浪港股 + 腾讯补充市值PE"""
-        # 基础清洗
         df = df.rename(columns={
             '代码': 'code', '中文名称': 'name', '最新价': 'price',
             '涨跌幅': 'change_pct', '成交量': 'volume', '成交额': 'amount',
@@ -221,13 +216,18 @@ class DataFetcher:
                         prefix, data = line.split('="', 1)
                         code = prefix.replace('v_hk', '').strip()
                         parts = data.split('~')
-                        if len(parts) < 46:
+                        if len(parts) < 50:
                             continue
                         
-                        pe = safe_float(parts[39], -1)
-                        market_cap = safe_float(parts[45])  # 总市值
-                        turnover = safe_float(parts[38])
-                        volume_ratio = safe_float(parts[39], 1.0)
+                        pe = safe_float(parts[29], -1)
+                        # 港股市值：优先总市值(parts[45])，为空则用流通市值(parts[44])，单位亿→元
+                        market_cap_total = safe_float(parts[45])
+                        market_cap_circ = safe_float(parts[44])
+                        market_cap = market_cap_total if market_cap_total > 0 else market_cap_circ
+                        market_cap = market_cap * 1e8
+                        
+                        turnover = safe_float(parts[28])
+                        volume_ratio = safe_float(parts[49], 1.0)
                         
                         tencent_data[code] = {
                             'pe_ttm': pe if pe > 0 else -1,
@@ -311,16 +311,22 @@ class DataFetcher:
                         prefix, data = line.split('="', 1)
                         code = prefix.replace('v_hk', '').strip()
                         parts = data.split('~')
-                        if len(parts) < 46:
+                        if len(parts) < 50:
                             continue
 
                         price = safe_float(parts[3])
                         change_pct = safe_float(parts[32])
-                        turnover = safe_float(parts[38])
-                        pe = safe_float(parts[39], -1)
-                        market_cap = safe_float(parts[45])  # 总市值（元）
-                        volume_ratio = safe_float(parts[39], 1.0)
-                        amplitude = safe_float(parts[43])
+                        turnover = safe_float(parts[28])
+                        pe = safe_float(parts[29], -1)
+                        
+                        # 港股市值：优先总市值(parts[45])，为空则用流通市值(parts[44])，单位亿→元
+                        market_cap_total = safe_float(parts[45])
+                        market_cap_circ = safe_float(parts[44])
+                        market_cap = market_cap_total if market_cap_total > 0 else market_cap_circ
+                        market_cap = market_cap * 1e8
+                        
+                        volume_ratio = safe_float(parts[49], 1.0)
+                        amplitude = safe_float(parts[33])
 
                         results.append({
                             'code': code,
