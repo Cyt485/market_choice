@@ -1,21 +1,23 @@
-name: 📊 Daily Value Stock Picker
+name: Daily Value Stock Picker
 
 on:
   schedule:
-    # 北京时间每天 9:00 运行 (UTC 1:00)
-    - cron: '0 1 * * 1-5'
-  workflow_dispatch:  # 支持手动触发
+    # 北京时间 工作日 08:30 (UTC+8 → UTC 00:30)
+    - cron: '30 0 * * 1-5'
+    # 北京时间 工作日 15:30 (收盘后)
+    - cron: '30 7 * * 1-5'
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
   pick-stocks:
     runs-on: ubuntu-latest
-    timeout-minutes: 15  # 防止长时间挂起
+    timeout-minutes: 25
     
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -30,13 +32,13 @@ jobs:
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
-        run: |
-          python main.py
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+        run: python main.py
 
-      - name: Upload results
+      - name: Upload results (for debug)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stock-picks-${{ github.run_id }}
+          name: stock-pick-results
           path: results_*.json
-          retention-days: 30
+          retention-days: 7
