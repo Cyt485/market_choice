@@ -1,7 +1,7 @@
-"""配置文件：价值投资筛选参数（优化版）"""
+"""配置文件：价值投资筛选参数（优化版 v2）—— 多数据源兜底 + 自适应阈值"""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 @dataclass
 class ValueInvestConfig:
@@ -27,9 +27,6 @@ class ValueInvestConfig:
     MAX_DEBT_RATIO: float = 80          # 资产负债率上限 80%（原60%，银行/地产可达90%）
     PREFERRED_DEBT_RATIO: float = 50    # 理想负债率（低于此加分）
     
-    # === 毛利率（行业差异化，取消一刀切）===
-    # 取消 MIN_GROSS_MARGIN 硬门槛，改为评分权重
-    
     # === 成长性（允许负增长，看相对改善）===
     MIN_REVENUE_GROWTH: float = -20     # 营收增长率下限 -20%（原0%，允许周期低谷）
     MIN_PROFIT_GROWTH: float = -30      # 净利润增长率下限 -30%（允许一次性亏损）
@@ -44,9 +41,14 @@ class ValueInvestConfig:
     
     # === 行业配置 ===
     TARGET_INDUSTRY_COUNT: int = 10     # 目标行业数量
-    MAX_PER_INDUSTRY: int = 1           # 每行业最多选1只
+    MAX_PER_INDUSTRY: int = 2           # 每行业最多选2只（放宽，避免过度集中）
     
-    # === 评分权重（新增：综合评分制替代硬门槛）===
+    # === 🆕 自适应阈值（解决推送股票过少问题）===
+    MIN_FINAL_PICKS: int = 5            # 最少推送股票数，不足时自动降级
+    MIN_SCORE_THRESHOLD: float = 15.0   # 最低评分门槛（原25，降低到15）
+    AUTO_RELAX_FILTERS: bool = True     # 候选不足时自动放宽过滤条件
+    
+    # === 评分权重 ===
     SCORE_WEIGHT_ROE: float = 20        # ROE权重
     SCORE_WEIGHT_VALUATION: float = 20  # 估值权重
     SCORE_WEIGHT_GROWTH: float = 15     # 成长性权重
@@ -54,9 +56,20 @@ class ValueInvestConfig:
     SCORE_WEIGHT_SAFETY: float = 15     # 财务安全权重
     SCORE_WEIGHT_QUALITY: float = 10    # 盈利质量权重
     
+    # === 🆕 多数据源配置 ===
+    DATA_SOURCE_ORDER: list = field(default_factory=lambda: [
+        "akshare_eastmoney",    # 东财（主）
+        "akshare_sina",         # 新浪
+        "tencent_qt",           # 腾讯行情
+        "local_fallback",       # 本地硬编码兜底
+    ])
+    REQUEST_TIMEOUT: int = 20          # 单次请求超时（秒）
+    MAX_RETRIES: int = 2               # 每个数据源最大重试次数
+    
     # === DeepSeek ===
     DEEPSEEK_MODEL: str = "deepseek-chat"
-    MAX_TOKENS_PER_ANALYSIS: int = 800
+    MAX_TOKENS_PER_ANALYSIS: int = 1200  # 增加token预算
+    AI_MAX_RETRIES: int = 2              # AI API重试次数
     
     # === Server酱 ===
     SERVERCHAN_URL: str = "https://sctapi.ftqq.com/{sendkey}.send"
